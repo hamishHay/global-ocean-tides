@@ -3,37 +3,67 @@ from scipy import sparse
 from scipy.sparse import linalg
 
 class LTEsolver:
-    def __init__(self, rot_rate, force_freq, radius, gravity, ho, alpha=0.0, nmax=4, tide_dir='east'):
+    """Class to semianalytically solve the global Laplace Tidal Equations
+
+    This class contains the relevant methods to solve the Laplace Tidal
+    Equations in a global ocean for a given set of input parameters and tidal
+    forcing. The solution method used was originally developed by Longuet and
+    Higgins (1966), although this code is based on Matsuyama et al., (2018)
+    and Beuthe (2016).
+
+    Attributes:
+        rot_rate: rotation rate of the tidally deformed body [rad s^-1].
+        ho: thickness of the ocean [m].
+        radius: mean radius of the body [m].
+        gravity: surface gravity at the mean radius of the body [m s^-2].
+        alpha: drag coefficient [s^-1]
+
+        lambs: Lamb's parameter (Matsuyama et al, 2018, Eq. C.7)
+        rot_force: Ratio of rotation freq to forcing freq (Matsuyama et al,
+                   2018, Eq. C.7)
+        b: Tidal Q (Matsuyama et al, 2018, Eq. C.6)
+
+        Kn, Ln, pn, qn: Spherical harmonic constants (Matsuyama et al, 2018,
+                        Eq. C.6)
+
+        nmax: Maximum spherical harmonic degree for the calculations
+        n: array of spherical harmonics degrees, starting from degree=1.
+
+    """
+
+    def __init__(self, rot_rate, radius, gravity, ho, alpha=0.0, nmax=4):
+        """Define problem parameters"""
         self.ho = ho
         self.rot_rate = rot_rate
-        self.force_freq = force_freq
         self.radius = radius
         self.gravity = gravity
 
-        self.tide_dir = tide_dir
 
-        self.rot_force = force_freq / (2.*rot_rate)
         self.lambs = 4*rot_rate**2.0 * radius**2.0 / (gravity*ho)
         self.b = alpha/(2. * rot_rate)
 
         self.nmax = nmax
         self.n = np.arange(1, self.nmax+1, 1, dtype=np.float128)
+        self.m = None
 
-        self.Kn = self.CalcKn(2)
-        self.Ln = self.CalcLn(2)
-        self.pn = self.CalcPn(2)
-        self.qn = self.CalcQn(2)
+
+    def SetupSolver(self):
+        """Setup all constants and matrices to solve the linear system Ax=b"""
+        if self.m is not None:
+            self.Kn = self.CalcKn(self.m)
+            self.Ln = self.CalcLn(self.m)
+            self.pn = self.CalcPn(self.m)
+            self.qn = self.CalcQn(self.m)
+        else:
+            raise ValueError("Forcing potential has not been defined. Run DefineForcing first!")
 
         self.CreateLTEMatrix()
-        self.CreateForcingVector()
-        self.SolveLTE()
 
-        self.CreateResonanceMatrix()
-        self.FindResonantThicknesses()
 
     def CreateResonanceMatrix(self):
-        nrows = (self.nmax)
-        ncols = (self.nmax)
+        """Define matrix to use in an eigenvalue problem"""
+        nrows = self.nmax
+        ncols = self.nmax
 
         coeff_mat = np.zeros((nrows,ncols), dtype=np.complex128)
         for i in range(0, nrows, 1):
@@ -58,48 +88,73 @@ class LTEsolver:
 
         self.res_mat = coeff_mat
 
+
     def FindResonantThicknesses(self):
-        x = sparse.linalg.eigs(self.res_mat, k=40)
+        """Find the eigenvalues of the LTE coefficient matrix"""
+        self.CreateResonanceMatrix()
+
+        x = sparse.linalg.eigs(self.res_mat, k=self.nmax-5)
 
         # print(x[0][1::2].imag*4*self.rot_rate**2 * self.radius**2/self.gravity)
         res_thicks = x[0][1::2].imag*4*self.rot_rate**2 * self.radius**2/self.gravity
-        print(res_thicks[res_thicks> 0.0])
+        # print(res_thicks[res_thicks> 0.0])
+
+        return res_thicks
+
 
     def SolveLTE(self):
+        """Solve the Laplace Tidal Equations using the coefficient matrix LTE_mat"""
         x = sparse.linalg.spsolve(self.LTE_mat, self.forcing_vec)
 
         stream_func_soln = x[::2]
         vel_pot_soln = x[1::2]
-        # print(stream_func_soln)
-        # print(vel_pot_soln)
-        # print(x[3].imag*2*(2+1)/self.radius**2.0*self.ho/self.force_freq)
-        # print(x[1].imag*2*(2+1)/self.radius**2.0*self.ho/self.force_freq)
+
+        return stream_func_soln, vel_pot_soln
 
 
-    def CreateForcingVector(self):
-        nrows = (self.nmax)*2
+    def DefineForcing(self, magnitude, freq, degree, order):
+        """Create the vector b in Ax=b using a user defined forcing potential
+
+        Creates a vector of zeros except for the forcing potential at the input
+        degree. All constants in the problem will be defined for this degree and
+        order.
+
+        Args:
+            magnitude: magnitude of the forcing potential
+            freq: frequency of the forcing potential
+            degree: spherical harmonic degree of the forcing potential, n
+            order: spherical harmonic order of the forcing potential, m
+
+        """
+
+        nrows = self.nmax*2
         self.forcing_vec = np.zeros(nrows)
-        self.forcing_vec[3] = (7./8.)*self.rot_rate**2.0*self.radius**2.0*0.0047
-
+        self.forcing_vec[degree+1] = magnitude
         self.forcing_vec *= 1.0/(2*self.rot_rate)
 
+        self.force_freq = freq
+        self.rot_force = self.force_freq / (2.*self.rot_rate)
+        self.m = order
+
+
     def CreateLTEMatrix(self):
-        nrows = (self.nmax)*2
-        ncols = (self.nmax)*2
+        """Create the matrix A of LTE coefficients in Ax=b"""
+        nrows = self.nmax*2
+        ncols = self.nmax*2
 
         coeff_mat = np.zeros((nrows,ncols), dtype=np.complex128)
         for i in range(0, nrows, 2):
             n = int((i+2)/2)
             n_indx = n - 1
 
-            # Stream function row (even i) #####################################
+            # Stream function row (even i)
             if i-1 >= 0:
                 coeff_mat[i,i-1] = complex(-self.qn[n_indx - 1], 0) # Left off-diagonal
             if i+3 <= nrows-1:
                 coeff_mat[i,i+3] = complex(-self.pn[n_indx + 1], 0) # Right off-diagonal
             coeff_mat[i, i] = complex(self.b, -self.Ln[n_indx])     # diagonal
 
-            # Velocity potential row (odd i) ###################################
+            # Velocity potential row (odd i)
             j = i+1
             if j-3 >= 0:
                 coeff_mat[j, j-3] = complex(self.qn[n_indx - 1], 0) # Left off-diagonal
@@ -107,11 +162,11 @@ class LTEsolver:
                 coeff_mat[j, j+1] = complex(self.pn[n_indx + 1], 0) # Right off-diagonal
             coeff_mat[j, j] = complex(self.b, -self.Kn[n_indx])
 
+        # Convert from dense to sparse matrix format
         self.LTE_mat = sparse.csr_matrix(coeff_mat)
 
     def CalcKn(self, m):
         n = self.n
-
         kn = m/(n*(n+1))
         kn += self.rot_force - 1.0*n*(n+1)/(self.lambs*self.rot_force)
         return kn
@@ -134,4 +189,12 @@ class LTEsolver:
 
 
 if __name__=='__main__':
-    solver = LTEsolver(5.31e-5, 5.31e-5, 252.1e3, 0.11, 100, alpha=0.0, nmax=50)
+    solver = LTEsolver(5.31e-5, 252.1e3, 0.11, 100, alpha=1e-8, nmax=80)
+
+    solver.DefineForcing(-(1./8.)*(5.31e-5)**2.0*(252.1e3)**2.0*0.0047, -5.31e-5, 2, 0)
+    solver.SetupSolver()
+    # (7./8.)*self.rot_rate**2.0*self.radius**2.0*0.0047
+    psi, phi = solver.SolveLTE()
+    resH = solver.FindResonantThicknesses()
+
+    print(resH[resH>0])
