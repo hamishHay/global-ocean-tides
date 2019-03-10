@@ -2,7 +2,7 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse import linalg
 
-class LTEsolver:
+class LTESolver:
     """Class to semianalytically solve the global Laplace Tidal Equations
 
     This class contains the relevant methods to solve the Laplace Tidal
@@ -38,7 +38,6 @@ class LTEsolver:
         self.radius = radius
         self.gravity = gravity
 
-
         self.lambs = 4*rot_rate**2.0 * radius**2.0 / (gravity*ho)
         self.b = alpha/(2. * rot_rate)
 
@@ -47,20 +46,21 @@ class LTEsolver:
         self.m = None
 
 
-    def SetupSolver(self):
+    def setup_solver(self):
         """Setup all constants and matrices to solve the linear system Ax=b"""
         if self.m is not None:
-            self.Kn = self.CalcKn(self.m)
-            self.Ln = self.CalcLn(self.m)
-            self.pn = self.CalcPn(self.m)
-            self.qn = self.CalcQn(self.m)
+            self.Kn = self.calc_kn(self.m)
+            self.Ln = self.calc_ln(self.m)
+            self.pn = self.calc_pn(self.m)
+            self.qn = self.calc_qn(self.m)
+
         else:
-            raise ValueError("Forcing potential has not been defined. Run DefineForcing first!")
+            raise ValueError("Forcing potential has not been defined. Run define_forcing first!")
 
-        self.CreateLTEMatrix()
+        self.create_lte_matrix()
 
 
-    def CreateResonanceMatrix(self):
+    def create_resonance_matrix(self):
         """Define matrix to use in an eigenvalue problem"""
         nrows = self.nmax
         ncols = self.nmax
@@ -70,11 +70,12 @@ class LTEsolver:
             n = int(i+1)
             n_indx = n - 1
 
+            # Left off-diagonal
             if i-2 >= 0:
-                # Left off-diagonal
                 coeff_mat[i,i-2] = self.qn[i-2]*self.qn[i-1]/complex(self.b, -self.Ln[i-1])
+
+            # Right off-diagonal
             if i+2 <= nrows-1:
-                # Right off-diagonal
                 coeff_mat[i,i+2] = self.pn[i+2]*self.pn[i+1]/complex(self.b, -self.Ln[i+1])
 
             # Diagonal components
@@ -86,23 +87,22 @@ class LTEsolver:
             coeff_mat[i, i] = An
             coeff_mat[i,:] *= -self.rot_force/(n*(n+1))
 
-        self.res_mat = coeff_mat
+        return sparse.csr_matrix(coeff_mat)
 
 
-    def FindResonantThicknesses(self):
+    def find_resonant_thicknesses(self):
         """Find the eigenvalues of the LTE coefficient matrix"""
-        self.CreateResonanceMatrix()
+        self.res_mat = self.create_resonance_matrix()
 
+        # Get the eigenvalues (1/lambs)
         x = sparse.linalg.eigs(self.res_mat, k=self.nmax-5)
 
-        # print(x[0][1::2].imag*4*self.rot_rate**2 * self.radius**2/self.gravity)
         res_thicks = x[0][1::2].imag*4*self.rot_rate**2 * self.radius**2/self.gravity
-        # print(res_thicks[res_thicks> 0.0])
 
         return res_thicks
 
 
-    def SolveLTE(self):
+    def solve_lte(self):
         """Solve the Laplace Tidal Equations using the coefficient matrix LTE_mat"""
         x = sparse.linalg.spsolve(self.LTE_mat, self.forcing_vec)
 
@@ -112,8 +112,8 @@ class LTEsolver:
         return stream_func_soln, vel_pot_soln
 
 
-    def DefineForcing(self, magnitude, freq, degree, order):
-        """Create the vector b in Ax=b using a user defined forcing potential
+    def define_forcing(self, magnitude, freq, degree, order):
+        """Create the vector b in Ax=b using a user defined forcing potential.
 
         Creates a vector of zeros except for the forcing potential at the input
         degree. All constants in the problem will be defined for this degree and
@@ -137,7 +137,7 @@ class LTEsolver:
         self.m = order
 
 
-    def CreateLTEMatrix(self):
+    def create_lte_matrix(self):
         """Create the matrix A of LTE coefficients in Ax=b"""
         nrows = self.nmax*2
         ncols = self.nmax*2
@@ -165,36 +165,36 @@ class LTEsolver:
         # Convert from dense to sparse matrix format
         self.LTE_mat = sparse.csr_matrix(coeff_mat)
 
-    def CalcKn(self, m):
+    def calc_kn(self, m):
         n = self.n
         kn = m/(n*(n+1))
         kn += self.rot_force - 1.0*n*(n+1)/(self.lambs*self.rot_force)
         return kn
 
-    def CalcLn(self, m):
+    def calc_ln(self, m):
         n = self.n
         ln = self.rot_force + m/(n*(n+1))
         return ln
 
-    def CalcPn(self, m):
+    def calc_pn(self, m):
         n = self.n
         pn = (n+1)*(n+m)/( n*(2*n+1) )
         pn[m-1] = 0.0
         return pn
 
-    def CalcQn(self, m):
+    def calc_qn(self, m):
         n = self.n
         qn = n*(n+1-m)/( (n+1)*(2*n+1) )
         return qn
 
 
 if __name__=='__main__':
-    solver = LTEsolver(5.31e-5, 252.1e3, 0.11, 100, alpha=1e-8, nmax=80)
+    solver = LTESolver(5.31e-5, 252.1e3, 0.11, 100, alpha=1e-8, nmax=80)
 
-    solver.DefineForcing(-(1./8.)*(5.31e-5)**2.0*(252.1e3)**2.0*0.0047, -5.31e-5, 2, 0)
-    solver.SetupSolver()
+    solver.define_forcing(-(1./8.)*(5.31e-5)**2.0*(252.1e3)**2.0*0.0047, -5.31e-5, 2, 0)
+    solver.setup_solver()
     # (7./8.)*self.rot_rate**2.0*self.radius**2.0*0.0047
-    psi, phi = solver.SolveLTE()
-    resH = solver.FindResonantThicknesses()
+    psi, phi = solver.solve_lte()
+    resH = solver.find_resonant_thicknesses()
 
     print(resH[resH>0])
