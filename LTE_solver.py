@@ -189,12 +189,18 @@ class LTESolver:
 
 
 if __name__=='__main__':
-    solver = LTESolver(5.31e-5, 252.1e3, 0.11, 100, alpha=1e-8, nmax=80)
+    rot_rate = 5.31e-5
+    radius = 252.1e3
+    grav = 0.11
+    ocean_thickness = 1e3
 
-    solver.define_forcing(-(1./8.)*(5.31e-5)**2.0*(252.1e3)**2.0*0.0047, -5.31e-5, 2, 0)
+    forcing_magnitude = -(1./8.)*rot_rate**2.0*(radius)**2.0*0.0047
+
+    solver = LTESolver(rot_rate, radius, grav, ocean_thickness, alpha=1e-8, nmax=80)
+
+    solver.define_forcing(forcing_magnitude, -rot_rate, 2, 2)
     solver.setup_solver()
-    # (7./8.)*self.rot_rate**2.0*self.radius**2.0*0.0047
+
+
     psi, phi = solver.solve_lte()
     resH = solver.find_resonant_thicknesses()
-
-    print(resH[resH>0])
