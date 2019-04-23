@@ -44,6 +44,7 @@ class LTESolver:
         self.nmax = nmax
         self.n = np.arange(1, self.nmax+1, 1, dtype=np.float128)
         self.m = None
+        self.beta = np.ones(self.nmax, dtype=np.float128)
 
 
     def setup_solver(self):
@@ -85,7 +86,7 @@ class LTESolver:
                 An += self.qn[i]*self.pn[i+1]/complex(self.b, -self.Ln[i+1])
 
             coeff_mat[i, i] = An
-            coeff_mat[i,:] *= -self.rot_force/(n*(n+1))
+            coeff_mat[i,:] *= -self.rot_force/(n*(n+1)*self.beta)
 
         return sparse.csr_matrix(coeff_mat)
 
@@ -96,9 +97,11 @@ class LTESolver:
 
         # Get the eigenvalues (1/lambs)
         x = sparse.linalg.eigs(self.res_mat, k=self.nmax-5)
-
-        res_thicks = x[0][1::2].imag*4*self.rot_rate**2 * self.radius**2/self.gravity
-
+        res_thicks = x[0].imag*4*self.rot_rate**2 * self.radius**2/self.gravity
+        # if self.m == 0:
+        #     res_thicks = x[0][1::2].imag*4*self.rot_rate**2 * self.radius**2/self.gravity
+        # else:
+        #     res_thicks = x[0][0::2].imag*4*self.rot_rate**2 * self.radius**2/self.gravity
         return res_thicks
 
 
@@ -128,9 +131,11 @@ class LTESolver:
         """
 
         nrows = self.nmax*2
-        self.forcing_vec = np.zeros(nrows)
+        self.forcing_vec = np.zeros(nrows, dtype=np.complex128)
         self.forcing_vec[degree+1] = magnitude
         self.forcing_vec *= 1.0/(2*self.rot_rate)
+
+        # print(self.forcing_vec)
 
         self.force_freq = freq
         self.rot_force = self.force_freq / (2.*self.rot_rate)
@@ -146,29 +151,40 @@ class LTESolver:
         for i in range(0, nrows, 2):
             n = int((i+2)/2)
             n_indx = n - 1
-
+            # print(i, n, n_indx)
             # Stream function row (even i)
             if i-1 >= 0:
-                coeff_mat[i,i-1] = complex(-self.qn[n_indx - 1], 0) # Left off-diagonal
+                coeff_mat[i,i-1] = np.complex(-self.qn[n_indx - 1], 0) # Left off-diagonal
             if i+3 <= nrows-1:
-                coeff_mat[i,i+3] = complex(-self.pn[n_indx + 1], 0) # Right off-diagonal
-            coeff_mat[i, i] = complex(self.b, -self.Ln[n_indx])     # diagonal
+                coeff_mat[i,i+3] = np.complex(-self.pn[n_indx + 1], 0) # Right off-diagonal
+            coeff_mat[i, i] = np.complex(self.b, -self.Ln[n_indx])     # diagonal
 
             # Velocity potential row (odd i)
             j = i+1
             if j-3 >= 0:
-                coeff_mat[j, j-3] = complex(self.qn[n_indx - 1], 0) # Left off-diagonal
+                coeff_mat[j, j-3] = np.complex(self.qn[n_indx - 1], 0) # Left off-diagonal
             if j+1 <= nrows-1:
-                coeff_mat[j, j+1] = complex(self.pn[n_indx + 1], 0) # Right off-diagonal
-            coeff_mat[j, j] = complex(self.b, -self.Kn[n_indx])
+                coeff_mat[j, j+1] = np.complex(self.pn[n_indx + 1], 0) # Right off-diagonal
+            coeff_mat[j, j] = np.complex(self.b, -self.Kn[n_indx])
 
         # Convert from dense to sparse matrix format
-        self.LTE_mat = sparse.csr_matrix(coeff_mat)
+        # print(coeff_mat)
+        self.LTE_mat = sparse.csr_matrix(coeff_mat, dtype=np.complex128)
+
+    def get_displacement(self, vel_pot, res=5):
+        eta = np.zeros((res,2*res), dtype=np.float)
+        cilm = np.zeros((len(vel_pot)+1, len(vel_pot)+1))
+        for n in range(len(vel_pot)):
+            l = n+1
+            vel_pot[n] *=  l*(l+1)/self.radius**2.0 * (self.ocean_thickness/self.force_freq)
+            vel_pot[n].real *= -1.0
+
+
 
     def calc_kn(self, m):
         n = self.n
         kn = m/(n*(n+1))
-        kn += self.rot_force - 1.0*n*(n+1)/(self.lambs*self.rot_force)
+        kn += self.rot_force - self.beta*n*(n+1)/(self.lambs*self.rot_force)
         return kn
 
     def calc_ln(self, m):
@@ -187,20 +203,30 @@ class LTESolver:
         qn = n*(n+1-m)/( (n+1)*(2*n+1) )
         return qn
 
+    def set_beta(self, beta):
+        self.beta = beta[:self.nmax]
+
 
 if __name__=='__main__':
-    rot_rate = 5.31e-5
-    radius = 252.1e3
-    grav = 0.11
+    rot_rate = 2.05e-5
+    radius =  1565000.0 - 10e3
+    grav =  1.3079460990117284
     ocean_thickness = 1e3
+
+    beta = np.loadtxt("/home/hamish/Research/Io/ocean_dissipation_ivo/beta_europa.txt")[:, 9]
+    beta[0] = 1.0#0.0001
 
     forcing_magnitude = -(1./8.)*rot_rate**2.0*(radius)**2.0*0.0047
 
-    solver = LTESolver(rot_rate, radius, grav, ocean_thickness, alpha=1e-8, nmax=80)
+    solver = LTESolver(rot_rate, radius, grav, ocean_thickness, alpha=1e-8, nmax=12)
+    solver.set_beta(beta)
+    # print(len(beta), len(solver.beta))
 
-    solver.define_forcing(forcing_magnitude, -rot_rate, 2, 2)
-    solver.setup_solver()
+    for i in range(3, 35):
+        solver.define_forcing(forcing_magnitude, -rot_rate*i, 2, 2)
+        solver.setup_solver()
 
 
-    psi, phi = solver.solve_lte()
-    resH = solver.find_resonant_thicknesses()
+        # psi, phi = solver.solve_lte()
+        resH = solver.find_resonant_thicknesses()
+        print(i, resH[0]/1e3)
