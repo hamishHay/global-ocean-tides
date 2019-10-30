@@ -90,6 +90,38 @@ class LTESolver:
 
         return sparse.csr_matrix(coeff_mat)
 
+    # def create_resonance_frequency_matrix(self):
+    #     """Define matrix to use in an eigenvalue problem"""
+    #     nrows = self.nmax
+    #     ncols = self.nmax
+    #
+    #     coeff_mat = np.zeros((nrows,ncols), dtype=np.complex128)
+    #     for i in range(0, nrows, 1):
+    #         n = int(i+1)
+    #         n_indx = n - 1
+    #
+    #         # Left off-diagonal
+    #         if i-2 >= 0:
+    #             coeff_mat[i,i-2] = self.qn[i-2]*self.qn[i-1]/complex(self.b, -self.Ln[i-1])
+    #
+    #         # Right off-diagonal
+    #         if i+2 <= nrows-1:
+    #             coeff_mat[i,i+2] = self.pn[i+2]*self.pn[i+1]/complex(self.b, -self.Ln[i+1])
+    #
+    #         # Diagonal components
+    #         An = complex(self.b, -self.Ln[i])
+    #         if i > 0 and i < nrows-1:
+    #             An += self.pn[i]*self.qn[i-1]/complex(self.b, -self.Ln[i-1])
+    #             An += self.qn[i]*self.pn[i+1]/complex(self.b, -self.Ln[i+1])
+    #
+    #         coeff_mat[i, i] = An
+    #
+    #         F = 2*self.rot_rate * self.radius**2.0 /(self.gravity * 1e3)
+    #
+    #         coeff_mat[i,:] *= -F/(n*(n+1)*self.beta)
+    #
+    #     return sparse.csr_matrix(coeff_mat)
+
 
     def find_resonant_thicknesses(self):
         """Find the eigenvalues of the LTE coefficient matrix"""
@@ -103,6 +135,21 @@ class LTESolver:
         # else:
         #     res_thicks = x[0][0::2].imag*4*self.rot_rate**2 * self.radius**2/self.gravity
         return res_thicks
+
+
+    # def find_resonant_frequencies(self):
+    #     """Find the frequency eigenvalues of the LTE coefficient matrix"""
+    #     self.res_freq_mat = self.create_resonance_frequency_matrix()
+    #
+    #     # Get the eigenvalues (1/lambs)
+    #     x = sparse.linalg.eigs(self.res_freq_mat, k=self.nmax-5)
+    #     # print(x)
+    #     res_freqs = 1.0/x[0].imag
+    #     # if self.m == 0:
+    #     #     res_thicks = x[0][1::2].imag*4*self.rot_rate**2 * self.radius**2/self.gravity
+    #     # else:
+    #     #     res_thicks = x[0][0::2].imag*4*self.rot_rate**2 * self.radius**2/self.gravity
+    #     return res_freqs
 
 
     def solve_lte(self):
@@ -135,7 +182,7 @@ class LTESolver:
         self.forcing_vec[degree+1] = magnitude
         self.forcing_vec *= 1.0/(2*self.rot_rate)
 
-        # print(self.forcing_vec)
+        # print("forcing", self.forcing_vec)
 
         self.force_freq = freq
         self.rot_force = self.force_freq / (2.*self.rot_rate)
