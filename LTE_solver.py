@@ -2,6 +2,9 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse import linalg
 
+# from slepc4py import SLEPc 
+from petsc4py import PETSc
+
 class LTESolver:
     """Class to semianalytically solve the global Laplace Tidal Equations
 
@@ -90,37 +93,63 @@ class LTESolver:
 
         return sparse.csr_matrix(coeff_mat)
 
-    # def create_resonance_frequency_matrix(self):
-    #     """Define matrix to use in an eigenvalue problem"""
-    #     nrows = self.nmax
-    #     ncols = self.nmax
-    #
-    #     coeff_mat = np.zeros((nrows,ncols), dtype=np.complex128)
-    #     for i in range(0, nrows, 1):
-    #         n = int(i+1)
-    #         n_indx = n - 1
-    #
-    #         # Left off-diagonal
-    #         if i-2 >= 0:
-    #             coeff_mat[i,i-2] = self.qn[i-2]*self.qn[i-1]/complex(self.b, -self.Ln[i-1])
-    #
-    #         # Right off-diagonal
-    #         if i+2 <= nrows-1:
-    #             coeff_mat[i,i+2] = self.pn[i+2]*self.pn[i+1]/complex(self.b, -self.Ln[i+1])
-    #
-    #         # Diagonal components
-    #         An = complex(self.b, -self.Ln[i])
-    #         if i > 0 and i < nrows-1:
-    #             An += self.pn[i]*self.qn[i-1]/complex(self.b, -self.Ln[i-1])
-    #             An += self.qn[i]*self.pn[i+1]/complex(self.b, -self.Ln[i+1])
-    #
-    #         coeff_mat[i, i] = An
-    #
-    #         F = 2*self.rot_rate * self.radius**2.0 /(self.gravity * 1e3)
-    #
-    #         coeff_mat[i,:] *= -F/(n*(n+1)*self.beta)
-    #
-    #     return sparse.csr_matrix(coeff_mat)
+    def create_resonance_frequency_matrix(self):
+        """Define matrix to use in an eigenvalue problem"""
+
+        print(PETSc.ScalarType)
+        
+
+        nrows = self.nmax*2
+        ncols = self.nmax*2
+
+        mat_I = PETSc.Mat().create()
+        mat_I.setSizes([nrows, ncols])
+        mat_I.setFromOptions()
+        mat_I.setUp()
+
+        mat_C = PETSc.Mat().create()
+        mat_C.setSizes([nrows, ncols])
+        mat_C.setFromOptions()
+        mat_C.setUp()
+
+        mat_D = PETSc.Mat().create()
+        mat_D.setSizes([nrows, ncols])
+        mat_D.setFromOptions()
+        mat_D.setUp()
+
+        # mat_I = np.zeros((nrows,ncols), dtype=np.complex128)
+        # mat_C = np.zeros((nrows,ncols), dtype=np.complex128)
+        # mat_D = np.zeros((nrows,ncols), dtype=np.complex128)
+        for i in range(0, nrows, 2):
+            n = int((i+2)/2)
+            n_indx = n - 1
+
+            # Stream function row (even i)
+            if i-1 >= 0:
+                mat_C[i,i-1] = np.complex(-self.qn[n_indx - 1], 0) # Left off-diagonal
+            if i+3 <= nrows-1:
+                mat_C[i,i+3] = np.complex(-self.pn[n_indx + 1], 0) # Right off-diagonal
+            mat_C[i, i] = np.complex(self.m / ( i * (i + 1) ), self.b )     # diagonal
+                
+            mat_I[i, i] = np.complex(1.0, 0)
+
+            # Velocity potential row (odd i)
+            j = i+1
+            if j-3 >= 0:
+                mat_C[j, j-3] = np.complex(self.qn[n_indx - 1], 0) # Left off-diagonal
+            if j+1 <= nrows-1:
+                mat_C[j, j+1] = np.complex(self.pn[n_indx + 1], 0) # Right off-diagonal
+            mat_C[j, j] = np.complex(self.m / ( i * (i + 1) ), self.b)
+
+            mat_D[j,j] = -np.complex( j * (j + 1), 0 ) * self.beta * 1.0/self.lambs
+
+            mat_I[j, j] = np.complex(1.0, 0)
+
+        mat_I.assemble()
+        mat_D.assemble()
+        mat_C.assemble()
+
+        return [mat_I, mat_C, mat_D]
 
 
     def find_resonant_thicknesses(self):
@@ -137,19 +166,27 @@ class LTESolver:
         return res_thicks
 
 
-    # def find_resonant_frequencies(self):
-    #     """Find the frequency eigenvalues of the LTE coefficient matrix"""
-    #     self.res_freq_mat = self.create_resonance_frequency_matrix()
-    #
-    #     # Get the eigenvalues (1/lambs)
-    #     x = sparse.linalg.eigs(self.res_freq_mat, k=self.nmax-5)
-    #     # print(x)
-    #     res_freqs = 1.0/x[0].imag
-    #     # if self.m == 0:
-    #     #     res_thicks = x[0][1::2].imag*4*self.rot_rate**2 * self.radius**2/self.gravity
-    #     # else:
-    #     #     res_thicks = x[0][0::2].imag*4*self.rot_rate**2 * self.radius**2/self.gravity
-    #     return res_freqs
+    def find_resonant_frequencies(self):
+        """Find the frequency eigenvalues of the LTE coefficient matrix"""
+        
+
+        E = SLEPc.PEP().create()
+        # E.setOperators([K,G,M])
+        # E.setType('linear')
+        # E.setProblemType(2)
+        # E.solve()
+
+        # self.create_resonance_frequency_matrix()
+    
+        # Get the eigenvalues (1/lambs)
+        # x = sparse.linalg.eigs(self.res_freq_mat, k=self.nmax-5)
+        # # print(x)
+        # res_freqs = 1.0/x[0].imag
+        # if self.m == 0:
+        #     res_thicks = x[0][1::2].imag*4*self.rot_rate**2 * self.radius**2/self.gravity
+        # else:
+        #     res_thicks = x[0][0::2].imag*4*self.rot_rate**2 * self.radius**2/self.gravity
+        return None#res_freqs
 
 
     def solve_lte(self):
@@ -269,11 +306,13 @@ if __name__=='__main__':
     solver.set_beta(beta)
     # print(len(beta), len(solver.beta))
 
-    for i in range(3, 35):
-        solver.define_forcing(forcing_magnitude, -rot_rate*i, 2, 2)
-        solver.setup_solver()
+    # for i in range(3, 35):
+    solver.define_forcing(forcing_magnitude, -rot_rate, 2, 2)
+    solver.setup_solver()
+
+    solver.create_resonance_frequency_matrix()
 
 
         # psi, phi = solver.solve_lte()
-        resH = solver.find_resonant_thicknesses()
-        print(i, resH[0]/1e3)
+        # resH = solver.find_resonant_thicknesses()
+        # print(i, resH[0]/1e3)
