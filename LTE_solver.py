@@ -2,7 +2,7 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse import linalg
 
-# from slepc4py import SLEPc 
+from slepc4py import SLEPc 
 from petsc4py import PETSc
 
 class LTESolver:
@@ -99,8 +99,8 @@ class LTESolver:
         print(PETSc.ScalarType)
         
 
-        nrows = self.nmax*2
-        ncols = self.nmax*2
+        nrows = self.nmax
+        ncols = self.nmax
 
         mat_I = PETSc.Mat().create()
         mat_I.setSizes([nrows, ncols])
@@ -120,34 +120,41 @@ class LTESolver:
         # mat_I = np.zeros((nrows,ncols), dtype=np.complex128)
         # mat_C = np.zeros((nrows,ncols), dtype=np.complex128)
         # mat_D = np.zeros((nrows,ncols), dtype=np.complex128)
-        for i in range(0, nrows, 2):
-            n = int((i+2)/2)
-            n_indx = n - 1
+        for i in range(0, nrows, 1):
+            # n = int((i+2)/2)
+            n = i+1
+            # n_indx = n - 1
 
             # Stream function row (even i)
-            if i-1 >= 0:
-                mat_C[i,i-1] = np.complex(-self.qn[n_indx - 1], 0) # Left off-diagonal
-            if i+3 <= nrows-1:
-                mat_C[i,i+3] = np.complex(-self.pn[n_indx + 1], 0) # Right off-diagonal
-            mat_C[i, i] = np.complex(self.m / ( i * (i + 1) ), self.b )     # diagonal
+            if i%2 == 0:
+                if i-1 >= 0:
+                    mat_C[i,i-1] = np.complex(0, -self.qn[i-1]) # Left off-diagonal
+                if i+1 <= nrows-1:
+                    mat_C[i,i+1] = np.complex(0, -self.pn[i+1]) # Right off-diagonal
+                mat_C[i, i] = np.complex(self.m / ( n* ( n + 1) ), self.b )     # diagonal
                 
             mat_I[i, i] = np.complex(1.0, 0)
 
             # Velocity potential row (odd i)
-            j = i+1
-            if j-3 >= 0:
-                mat_C[j, j-3] = np.complex(self.qn[n_indx - 1], 0) # Left off-diagonal
-            if j+1 <= nrows-1:
-                mat_C[j, j+1] = np.complex(self.pn[n_indx + 1], 0) # Right off-diagonal
-            mat_C[j, j] = np.complex(self.m / ( i * (i + 1) ), self.b)
+            if i%2 != 0:
+                if i-1 >= 0:
+                    mat_C[i, i-1] = np.complex(0, self.qn[i-1]) # Left off-diagonal
+                if i+1 <= nrows-1:
+                    mat_C[i, i+1] = np.complex(0, self.pn[i+1]) # Right off-diagonal
+                mat_C[i, i] = np.complex(self.m / ( n * (n + 1) ), self.b)
 
-            mat_D[j,j] = -np.complex( j * (j + 1), 0 ) * self.beta * 1.0/self.lambs
+            # print(j, self.beta, j)
+                mat_D[i,i] = -np.complex( n * (n + 1), 0 ) * self.beta[i] * 1.0/self.lambs
 
-            mat_I[j, j] = np.complex(1.0, 0)
+            # mat_I[j, j] = np.complex(1.0, 0)
+
+        
 
         mat_I.assemble()
         mat_D.assemble()
         mat_C.assemble()
+
+        print(mat_D[0,0], mat_D[1,1])
 
         return [mat_I, mat_C, mat_D]
 
@@ -169,12 +176,40 @@ class LTESolver:
     def find_resonant_frequencies(self):
         """Find the frequency eigenvalues of the LTE coefficient matrix"""
         
+        A, B, C = self.create_resonance_frequency_matrix()
 
         E = SLEPc.PEP().create()
-        # E.setOperators([K,G,M])
-        # E.setType('linear')
-        # E.setProblemType(2)
-        # E.solve()
+        E.setOperators([C,B,A])
+        E.setType('qarnoldi')
+        E.setProblemType(SLEPc.PEP.ProblemType.GENERAL)
+        # E.refine(SLEPc.PEP.SIMPLE)
+        E.setDimensions(nev=20)
+        E.setTolerances(1e-16)
+        E.setTarget(-0.5)
+        E.setWhichEigenpairs(7)
+        E.setFromOptions()
+        E.solve()
+
+        nconv = E.getConverged()
+
+        print(nconv)
+
+        if nconv > 0:
+            # Create the results vectors
+            vr, wr = A.getVecs()
+            vi, wi = A.getVecs()
+            #
+            print()
+
+        for i in range(nconv):
+            k = E.getEigenpair(i, vr, vi)
+            error = E.computeError(i)
+            if k.imag != 0.0:
+                print(" {:1.12f}+{:1.12f} j {:1.12f}".format(k.real, k.imag, error))
+                print(" {:3.2f} days".format( (2*np.pi / (k.real*2*self.rot_rate) ) / (24*60*60) ))
+            else:
+                print(" %12f %12g" % (k.real, error))
+                print()
 
         # self.create_resonance_frequency_matrix()
     
@@ -292,25 +327,26 @@ class LTESolver:
 
 
 if __name__=='__main__':
-    rot_rate = 2.05e-5
-    radius =  1565000.0 - 10e3
-    grav =  1.3079460990117284
-    ocean_thickness = 1e3
+    rot_rate = 2.05e-5*0.5
+    radius =  2500e3 #1565000.0 - 10e3
+    grav =  1.41 #1.3079460990117284
+    ocean_thickness = 50e3
 
-    beta = np.loadtxt("/home/hamish/Research/Io/ocean_dissipation_ivo/beta_europa.txt")[:, 9]
+    beta = np.loadtxt("beta_europa.txt")[:, 9]
     beta[0] = 1.0#0.0001
+    beta[:] = 1.0
 
     forcing_magnitude = -(1./8.)*rot_rate**2.0*(radius)**2.0*0.0047
 
-    solver = LTESolver(rot_rate, radius, grav, ocean_thickness, alpha=1e-8, nmax=12)
+    solver = LTESolver(rot_rate, radius, grav, ocean_thickness, alpha=0.0, nmax=26)
     solver.set_beta(beta)
     # print(len(beta), len(solver.beta))
 
     # for i in range(3, 35):
-    solver.define_forcing(forcing_magnitude, -rot_rate, 2, 2)
+    solver.define_forcing(forcing_magnitude, rot_rate, 2, 2)
     solver.setup_solver()
 
-    solver.create_resonance_frequency_matrix()
+    solver.find_resonant_frequencies()
 
 
         # psi, phi = solver.solve_lte()
