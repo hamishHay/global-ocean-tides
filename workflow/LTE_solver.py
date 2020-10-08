@@ -1,6 +1,7 @@
 import numpy as np
 from scipy import sparse
 from scipy.sparse import linalg
+from scipy.special import factorial
 
 class LTESolver:
     """Class to semianalytically solve the global Laplace Tidal Equations
@@ -46,10 +47,10 @@ class LTESolver:
             self.b = 0.0
 
         self.nmax = nmax
-        self.n = np.arange(1, self.nmax+1, 1, dtype=np.complex)
+        self.n = np.arange(1, self.nmax+1, 1, dtype=np.int)
         self.m = None
         self.beta = np.ones(self.nmax, dtype=np.complex)
-
+        self.alpha = alpha
 
 
     def setup_solver(self):
@@ -166,10 +167,25 @@ class LTESolver:
         stream_func_soln = x[::2]
         vel_pot_soln = x[1::2]
 
-        
+        self.phi = vel_pot_soln
+        self.psi = stream_func_soln
 
         return stream_func_soln, vel_pot_soln
 
+    def get_dissipated_energy(self, den=1e3):
+        """Returns the surface and time itegrated dissipated energy solutions 
+        from the LTE. solve_lte must be run first."""
+
+        E_diss = 2 * den * abs(self.ho) * self.alpha * np.pi * np.sum(self.Nnm * (abs(self.phi)**2.0 + abs(self.psi)**2.0))
+
+        return E_diss #Dissipated energy in watts
+        
+    def get_h2(self):
+        h2 = self.gravity/self.radius**2 * self.ho/abs(self.force_freq)
+        h2 *= 2 * (2 + 1) * 1j * self.phi[1]/self.forcing_magnitude
+        
+        return np.conjugate(h2)
+        # print(self.phi) 
 
     def define_forcing(self, magnitude, freq, degree, order):
         """Create the vector b in Ax=b using a user defined forcing potential.
@@ -190,6 +206,7 @@ class LTESolver:
         self.forcing_vec = np.zeros(nrows, dtype=np.complex128)
         self.forcing_vec[degree+1] = magnitude
 
+        self.forcing_magnitude = magnitude
         # if self.rot_rate > 1e-7:
         self.forcing_vec *= 1.0/(2*self.rot_rate)
 
@@ -204,6 +221,10 @@ class LTESolver:
         # else:
             # self.rot_force = 0.0
         self.m = order
+
+        self.Nnm = self.n*(self.n+1)/(2*self.n+1)*factorial(self.n+self.m)/factorial(self.n-self.m)
+        self.Nnm[0] = 1.0
+        
 
 
     def create_lte_matrix(self):
@@ -249,7 +270,7 @@ class LTESolver:
 
 
     def calc_kn(self, m):
-        n = self.n
+        n = np.array([complex(i) for i in self.n])
         kn = m/(n*(n+1))
         kn += self.rot_force - self.beta*n*(n+1)/(self.lambs*self.rot_force)
         return kn
@@ -280,20 +301,56 @@ if __name__=='__main__':
     grav =  1.3079460990117284
     ocean_thickness = 1e3
 
-    beta = np.loadtxt("/home/hamish/Research/Io/ocean_dissipation_ivo/beta_europa.txt")[:, 9]
-    beta[0] = 1.0#0.0001
+    radius = 2400e3
+    rot_rate = 2*np.pi / (17*24*60*60.)
+    grav = 1.2
 
-    forcing_magnitude = -(1./8.)*rot_rate**2.0*(radius)**2.0*0.0047
+    #beta = np.loadtxt("/home/hamish/Research/Io/ocean_dissipation_ivo/beta_europa.txt")[:, 9]
+    #beta[0] = 1.0#0.0001
 
-    solver = LTESolver(rot_rate, radius, grav, ocean_thickness, alpha=1e-8, nmax=12)
-    solver.set_beta(beta)
+    forcing_magnitude = -(1./8.)*rot_rate**2.0*(radius)**2.0*0.0047 * 0.1
+
+    
+    #solver.set_beta(beta)
     # print(len(beta), len(solver.beta))
+    ho = np.logspace(1, 3,2001)
+    E = np.zeros(2001, dtype=np.complex)
+    for j in range(1,3):
+        for i in range(2001):
+            solver = LTESolver(rot_rate, radius, grav, ho[i], alpha=1e-6, nmax=12)
+            solver.define_forcing(forcing_magnitude, j*rot_rate, 2, 2)
+            solver.setup_solver()
 
-    for i in range(3, 35):
-        solver.define_forcing(forcing_magnitude, -rot_rate*i, 2, 2)
-        solver.setup_solver()
+            solver.solve_lte()
+            # E[i] = solver.get_dissipated_energy()
+            
+            E[i] += solver.get_h2()
+            # psi, phi = solver.solve_lte()
+        #resH = solver.find_resonant_thicknesses()
+        
+    import matplotlib.pyplot as plt 
+    fig, ax1 = plt.subplots(ncols=1)
+    ho/=1e3
+    
+    h2_pos = E.copy()
+    h2_neg = E.copy()
+
+    h2_pos.real[h2_pos.real<0] = np.nan
+    h2_neg.real[h2_pos.real>0] = np.nan
+
+    ax1.loglog(ho, -E.imag, 'r-', label='-Im($h_2$)')
 
 
-        # psi, phi = solver.solve_lte()
-        resH = solver.find_resonant_thicknesses()
-        print(i, resH[0]/1e3)
+    ax1.loglog(ho, h2_pos.real, 'k-', label='Re($h_2$)')
+    ax1.loglog(ho, -h2_neg.real, 'k--')
+
+    ax1.loglog(ho, abs(E), 'k-', alpha=0.4)
+
+    ax1.axhline(1.0)
+
+    ax1.set_xlabel("Ocean thickness [km]")
+    ax1.set_ylabel("$h_2$ Love number")
+    
+    ax1.legend(frameon=False)
+
+    plt.show()

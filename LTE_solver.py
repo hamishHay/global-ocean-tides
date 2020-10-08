@@ -42,7 +42,10 @@ class LTESolver:
         self.gravity = gravity
 
         self.lambs = 4*rot_rate**2.0 * radius**2.0 / (gravity*ho)
-        self.b = alpha/(2. * rot_rate)
+        try:
+            self.b = alpha/(2. * rot_rate)
+        except ZeroDivisionError:
+            self.b = 0.0
 
         self.nmax = nmax
         self.n = np.arange(1, self.nmax+1, 1, dtype=np.float128)
@@ -230,6 +233,9 @@ class LTESolver:
 
         stream_func_soln = x[::2]
         vel_pot_soln = x[1::2]
+
+        self.PHI = vel_pot_soln
+        self.PSI = stream_func_soln
 
         return stream_func_soln, vel_pot_soln
 
