@@ -170,6 +170,8 @@ class LTESolver:
         self.phi = vel_pot_soln
         self.psi = stream_func_soln
 
+        # print(x)
+
         return stream_func_soln, vel_pot_soln
 
     def get_dissipated_energy(self, den=1e3):
@@ -210,7 +212,7 @@ class LTESolver:
         # if self.rot_rate > 1e-7:
         self.forcing_vec *= 1.0/(2*self.rot_rate)
 
-
+        # print(self.forcing_vec)
         # print("forcing", self.forcing_vec)
 
         self.force_freq = freq
@@ -224,6 +226,8 @@ class LTESolver:
 
         self.Nnm = self.n*(self.n+1)/(2*self.n+1)*factorial(self.n+self.m)/factorial(self.n-self.m)
         self.Nnm[0] = 1.0
+
+        # print(factorial(self.n+self.m)/factorial(self.n-self.m))
         
 
 
@@ -252,12 +256,14 @@ class LTESolver:
                 coeff_mat[j, j+1] = np.complex(self.pn[n_indx + 1], 0) # Right off-diagonal
             coeff_mat[j, j] = np.complex(self.b, -self.Kn[n_indx])
 
-
+        # print(coeff_mat)
         # print(np.diag(coeff_mat)[1])
 
         # Convert from dense to sparse matrix format
         # print(coeff_mat)
         self.LTE_mat = sparse.csr_matrix(coeff_mat, dtype=np.complex128)
+        # print(self.LTE_mat)
+
 
     def get_displacement(self, vel_pot, res=5):
         eta = np.zeros((res,2*res), dtype=np.float)
@@ -283,7 +289,8 @@ class LTESolver:
     def calc_pn(self, m):
         n = self.n
         pn = (n+1)*(n+m)/( n*(2*n+1) )
-        pn[m-1] = 0.0
+        # pn[m] = 0.0
+        # print(pn)
         return pn
 
     def calc_qn(self, m):
@@ -297,60 +304,71 @@ class LTESolver:
 
 if __name__=='__main__':
     rot_rate = 2.05e-5
-    radius =  1565000.0 - 10e3
+    radius =  1550e3 #- 10e3
     grav =  1.3079460990117284
     ocean_thickness = 1e3
 
-    radius = 2400e3
-    rot_rate = 2*np.pi / (17*24*60*60.)
-    grav = 1.2
+    # radius = 2400e3
+    # rot_rate = 2*np.pi / (17*24*60*60.)
+    grav = 1.3
 
     #beta = np.loadtxt("/home/hamish/Research/Io/ocean_dissipation_ivo/beta_europa.txt")[:, 9]
     #beta[0] = 1.0#0.0001
 
     forcing_magnitude = -(1./8.)*rot_rate**2.0*(radius)**2.0*0.0047 * 0.1
-
+    forcing_magnitude = 1.0
     
     #solver.set_beta(beta)
     # print(len(beta), len(solver.beta))
-    ho = np.logspace(1, 3,2001)
-    E = np.zeros(2001, dtype=np.complex)
-    for j in range(1,3):
-        for i in range(2001):
-            solver = LTESolver(rot_rate, radius, grav, ho[i], alpha=1e-6, nmax=12)
-            solver.define_forcing(forcing_magnitude, j*rot_rate, 2, 2)
+    ho = np.logspace(0, 5,2001)
+    # ho = np.ones(100)*10e3
+    E = np.zeros(2001, dtype=np.float)
+
+    
+    import timeit
+    times = [] 
+    for j in range(1,2):
+        for i in range(len(ho)):
+            # start = timeit.default_timer()
+            solver = LTESolver(rot_rate, radius, grav, ho[i], alpha=1e-7, nmax=12)
+            solver.define_forcing(forcing_magnitude, -j*rot_rate, 2, 1)
             solver.setup_solver()
 
             solver.solve_lte()
-            # E[i] = solver.get_dissipated_energy()
+            end = timeit.default_timer()
+            # times.append(end-start)
+    
+
+    # print(times, np.mean(times))
+            E[i] = solver.get_dissipated_energy()
             
-            E[i] += solver.get_h2()
+            # E[i] += solver.get_h2()
             # psi, phi = solver.solve_lte()
         #resH = solver.find_resonant_thicknesses()
-        
+    print(E)
     import matplotlib.pyplot as plt 
     fig, ax1 = plt.subplots(ncols=1)
     ho/=1e3
     
-    h2_pos = E.copy()
-    h2_neg = E.copy()
+    # h2_pos = E.copy()
+    # h2_neg = E.copy()
 
-    h2_pos.real[h2_pos.real<0] = np.nan
-    h2_neg.real[h2_pos.real>0] = np.nan
+    # h2_pos.real[h2_pos.real<0] = np.nan
+    # h2_neg.real[h2_pos.real>0] = np.nan
 
-    ax1.loglog(ho, -E.imag, 'r-', label='-Im($h_2$)')
+    ax1.loglog(ho, E, 'r-', label='-Im($h_2$)')
 
 
-    ax1.loglog(ho, h2_pos.real, 'k-', label='Re($h_2$)')
-    ax1.loglog(ho, -h2_neg.real, 'k--')
+    # ax1.loglog(ho, h2_pos.real, 'k-', label='Re($h_2$)')
+    # ax1.loglog(ho, -h2_neg.real, 'k--')
 
-    ax1.loglog(ho, abs(E), 'k-', alpha=0.4)
+    # ax1.loglog(ho, abs(E), 'k-', alpha=0.4)
 
-    ax1.axhline(1.0)
+    # ax1.axhline(1.0)
 
-    ax1.set_xlabel("Ocean thickness [km]")
-    ax1.set_ylabel("$h_2$ Love number")
+    # ax1.set_xlabel("Ocean thickness [km]")
+    # ax1.set_ylabel("$h_2$ Love number")
     
-    ax1.legend(frameon=False)
+    # ax1.legend(frameon=False)
 
     plt.show()
