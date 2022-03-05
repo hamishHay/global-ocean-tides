@@ -1,0 +1,32 @@
+The files and Jupyter notebook provided here are the software and data used to create all figures in the manuscript "The high-frequency tidal response of ocean worlds: Application to Europa and Ganymede". 
+
+The data files containing the static Love numbers that are required to run this notebook can be downloaded from the Zenodo repository https://doi.org/10.5281/zenodo.6330195, and should be placed in the "data" directory.
+ 
+The Jupyter notebook uses the programming language Julia, and specficially was tested using v1.6.5, available here: https://julialang.org/downloads/
+
+After installing this version of Julia, the following dependencies are required to run the notebook:
+
+IJulia
+PyCall
+PyPlot 
+Interpolations
+HDF5
+Conda 
+
+These can all be installed from the Julia terminal by typing "]" to enter the Julia package manager, followed by "add IJulia", for example.
+
+We also need the python seaborn package. In the Julia terminal, run
+
+    using Conda
+    Conda.add("seaborn")
+
+Once these dependencies are installed, open a Julia terminal and run
+
+    using Julia
+    notebook()
+
+This will open an IJulia Jupyter notebook in your browser. Navigate to the file "high_freq_lovenum.ipynb", and you will be able to reproduce all figures from our paper by running the notebook. 
+
+
+
+
